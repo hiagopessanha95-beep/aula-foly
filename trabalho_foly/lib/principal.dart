@@ -45,6 +45,48 @@ class _PrincipalState extends State<Principal> {
   // Turma lembrada localmente (evita piscar a tela no F5)
   String? _turmaEscolhida;
 
+  // Streams guardados para não serem recriados a cada setState (evita piscar)
+  final Stream<User?> _authStream = FirebaseAuth.instance.authStateChanges();
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? _userDocStream;
+  String? _userDocUid;
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? _userDocStreamPara(
+      User? user) {
+    if (user == null) {
+      _userDocStream = null;
+      _userDocUid = null;
+      return null;
+    }
+    if (_userDocUid != user.uid) {
+      _userDocUid = user.uid;
+      _userDocStream = FirebaseFirestore.instance
+          .collection('usuarios')
+          .doc(user.uid)
+          .snapshots();
+    }
+    return _userDocStream;
+  }
+
+  Stream<QuerySnapshot>? _eventosStream;
+  String? _eventosChave;
+
+  Stream<QuerySnapshot> _eventosStreamPara(String turma) {
+    final chave = '$turma-${_focusedDay.year}-${_focusedDay.month}';
+    if (_eventosChave != chave) {
+      _eventosChave = chave;
+      _eventosStream = _eventosDe(turma)
+          .where('data',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(
+                  DateTime(_focusedDay.year, _focusedDay.month, 1)))
+          .where('data',
+              isLessThan: Timestamp.fromDate(
+                  DateTime(_focusedDay.year, _focusedDay.month + 1, 1)))
+          .snapshots();
+    }
+    return _eventosStream!;
+  }
+
   SharedPreferences? _prefs;
   bool _prefsCarregadas = false;
   StreamSubscription<User?>? _authSub;
@@ -443,6 +485,10 @@ class _PrincipalState extends State<Principal> {
     _dadosFuture = null;
     _dadosUid = null;
     _turmaEscolhida = null;
+    _userDocStream = null;
+    _userDocUid = null;
+    _eventosStream = null;
+    _eventosChave = null;
     // Sem Navigator: o AuthGate volta para o Login sozinho.
   }
 
@@ -486,7 +532,7 @@ class _PrincipalState extends State<Principal> {
     if (!_prefsCarregadas) return _telaCarregando();
 
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: _authStream,
       builder: (context, authSnapshot) {
         // Espera o Firebase restaurar a sessão (evita "piscar" deslogado no F5)
         if (authSnapshot.connectionState == ConnectionState.waiting) {
@@ -506,12 +552,7 @@ class _PrincipalState extends State<Principal> {
             final ehAdmin = dadosSnapshot.data?.admin ?? false;
 
             return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: user == null
-                  ? null
-                  : FirebaseFirestore.instance
-                      .collection('usuarios')
-                      .doc(user.uid)
-                      .snapshots(),
+              stream: _userDocStreamPara(user),
               builder: (context, userSnap) {
                 final t = userSnap.data?.data()?['turma'];
                 final String? turmaDoUsuario =
@@ -622,14 +663,7 @@ class _PrincipalState extends State<Principal> {
     final logado = FirebaseAuth.instance.currentUser != null;
 
     return StreamBuilder<QuerySnapshot>(
-      stream: _eventosDe(turma)
-          .where('data',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(
-                  DateTime(_focusedDay.year, _focusedDay.month, 1)))
-          .where('data',
-              isLessThan: Timestamp.fromDate(
-                  DateTime(_focusedDay.year, _focusedDay.month + 1, 1)))
-          .snapshots(),
+      stream: _eventosStreamPara(turma),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
